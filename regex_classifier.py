@@ -33,9 +33,10 @@ def evolve_population(pop_size, n_gen, data_generator,
                       regex_components, early_stopping,
                       **gen_kwargs):
     np.random.seed(None)
-    pop = np.random.randint(
-        gen_kwargs['n_choices'],
-        size=(pop_size, gen_kwargs['ind_len'])
+    pop = np.random.choice(
+        np.arange(gen_kwargs['n_choices']),
+        size=(pop_size, gen_kwargs['ind_len']),
+        p=gen_kwargs['component_weight']
     )
     early_stopping = int(early_stopping)
     for gen in range(1, n_gen + 1):
@@ -60,8 +61,8 @@ def generation(pop, fitness_func,
                n_selected, n_offspring,
                mut_prob, crossover_prob,
                mut_rate, crossover_rate,
-               ind_len, n_choices):
-
+               ind_len, n_choices,
+               component_weight):
     # since the training data is changed at each generation we have to
     # reevaluate the pop fitness each cycle.
     pop_fitness = np.asarray([fitness_func(i) for i in pop])
@@ -76,7 +77,8 @@ def generation(pop, fitness_func,
         offspring += crossover(*pop[np.random.choice(pop_idx, size=2)],
                                ind_len, crossover_rate)
     offspring += [
-        mutate(pop[np.random.choice(pop_idx)], mut_rate, n_choices)
+        mutate(pop[np.random.choice(pop_idx)],
+               mut_rate, n_choices, component_weight)
         for _ in range(n_mutants)]
     offspring = np.stack(offspring)
     offspring_fitness = np.asarray([fitness_func(o) for o in offspring])
@@ -114,9 +116,11 @@ def crossover(ind1, ind2, ind_len, crossover_rate):
     return ind1, ind2
 
 
-def mutate(individual, mut_rate, n_choices):
+def mutate(individual, mut_rate, n_choices, component_weight):
     n_muts = np.random.poisson(mut_rate)
-    mutations = np.random.randint(0, n_choices, size=n_muts)
+    mutations = np.random.choice(np.arange(n_choices),
+                                 size=n_muts,
+                                 p=component_weight)
     mut_pos = np.random.randint(0, individual.size, size=n_muts)
     individual[mut_pos] = mutations
     return individual
@@ -165,6 +169,9 @@ class RegexGeneticEnsembleClassifier(BaseEstimator, ClassifierMixin):
     regex_components: str or array like, recommended, default A-Z
         The components/building blocks for each regex.
 
+    component_weight: array, default None
+        The weights (probability of selection) for each component.
+
     n_selected: int, optional, default: 50
         Genetic algorithm parameter mu, the number of individuals which are
         selected to "survive" each generation.
@@ -209,7 +216,7 @@ class RegexGeneticEnsembleClassifier(BaseEstimator, ClassifierMixin):
     '''
     def __init__(self, n_pops=10, pop_size=100, n_gen=5, n_best=1,
                  ind_len=10, regex_components='ABCDEFGHIJKLMNOPQRSTUVWXYZ',
-                 n_selected=50, n_offspring=10,
+                 component_weight=None, n_selected=50, n_offspring=10,
                  crossover_prob=0.2, mut_prob=0.4,
                  crossover_rate=1, mut_rate=1,
                  batch_size=100, early_stopping=False, n_jobs=-1):
@@ -219,6 +226,7 @@ class RegexGeneticEnsembleClassifier(BaseEstimator, ClassifierMixin):
         self.n_best = n_best
         self.ind_len = ind_len
         self.regex_components = regex_components
+        self.component_weight = component_weight
         self.n_selected = n_selected
         self.n_offspring = n_offspring
         self.crossover_prob = crossover_prob
@@ -231,6 +239,8 @@ class RegexGeneticEnsembleClassifier(BaseEstimator, ClassifierMixin):
 
     def fit(self, X, y):
         assert self.mut_prob + self.crossover_prob <= 1
+        if self.component_weight is not None:
+            assert len(self.regex_components) == len(self.component_weight)
         evolve_params = self.get_params()
         evolve_params['n_choices'] = len(self.regex_components)
         n_jobs = evolve_params.pop('n_jobs')
